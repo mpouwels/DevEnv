@@ -1,0 +1,150 @@
+---
+- name: development
+  hosts: development
+  become: yes
+  vars:
+      list_of_ips: "{{ groups['all'] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | join(',') }}"
+      mysql_root_password: "development"
+  # vars_files:
+  #   - ./vars/vault.yml
+  #   - ./vars/vars.yml
+
+  pre_tasks:
+  - name: Update apt cache if needed.
+    apt: update_cache=yes cache_valid_time=3600
+
+  tasks:
+# basic stuff  ----------------------
+
+  - name: Ensure NTP (for time synchronization) is installed.
+    apt: name=ntp state=present
+
+  - name: Set timezone
+    timezone:
+      name: Europe/Amsterdam
+
+  - name: Ensure NTP is running.
+    service: name=ntp state=started enabled=yes
+
+  - name: show IP addresses
+    connection: local
+    debug: var=list_of_ips
+
+  - name: install net-tools
+    apt: name=net-tools state=present
+
+# APACHE -------------------------
+  - name: be sure apache2 is installed
+    apt:
+      name: apache2
+      state: present
+    tags: apache2
+
+  - name: copy hostfiles
+    synchronize:
+      src: files/sites-enabled/
+      dest: /etc/apache2/sites-enabled/
+
+  - name: be sure apache2 is running and enabled
+    service:
+      name: apache2
+      state: started
+      enabled: yes
+    tags: apache2
+
+  - name: install php and libraries
+    apt:
+      pkg:
+        - php
+        - php-mysql
+        - composer
+        - zip
+        - unzip
+        - php7.2-zip
+        - php7.2-bcmath
+        - php7.2-ctype
+        - php7.2-json
+        - php7.2-mbstring
+        - php7.2-pdo
+        - php7.2-tokenizer
+        - php7.2-xml
+        - composer
+        - nfs-kernel-server
+        - php7.2-soap
+        - php7.2-xdebug
+
+      state: present
+
+    notify: restart apache2
+
+  - name: enable modules
+    apache2_module: name={{ item }} state=present
+    with_items:
+      - rewrite
+    notify: restart apache2
+
+# MYSQL ----------------------
+
+  - name: be sure mariadb is running and enabled
+    apt:
+      pkg:
+        - python-mysqldb
+        - mariadb-server
+        - mariadb-client
+      state: present
+
+  - name: be sure mariadb is running and enabled
+    service:
+      name: mysql
+      state: started
+      enabled: yes
+
+  # Remove all anonymous users for all hosts
+  - name: Remove all anonymous user accounts
+    mysql_user:
+      name: ""
+      host_all: yes
+      state: absent
+
+  - name: set root password for all root accounts
+    mysql_user:
+      name: root
+      host: "{{ item }}"
+      password: "{{ mysql_root_password }}"
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+      check_implicit_admin: yes
+      priv: "*.*:ALL,GRANT"
+    with_items:
+      - "{{ ansible_hostname }}"
+      - 127.0.0.1
+      - ::1
+      - localhost
+
+  - name: create admin account
+    mysql_user:
+      name: admin
+      host: "{{ item }}"
+      password: "{{ mysql_root_password }}"
+      login_host: localhost
+      login_port: 3306
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+      check_implicit_admin: yes
+      priv: "*.*:ALL,GRANT"
+    with_items:
+      - "{{ ansible_hostname }}"
+      - 127.0.0.1
+      - ::1
+      - localhost
+
+  # - name: Copy the root credentials as .my.cnf file to /home/{{ ansible_user | default(lookup('env', 'USER'), True) }}/.my.cnf
+  #   template: src=root.cnf.j2 dest="/home/{{ ansible_user | default(lookup('env', 'USER'), True) }}/.my.cnf" mode=0600
+
+# Handlers ------------------------
+
+  handlers:
+    - name: restart apache2
+      service:
+        name: apache2
+        state: restarted

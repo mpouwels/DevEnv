@@ -1,0 +1,2 @@
+[development]
+172.28.128.10 ansible_connection=ssh ansible_user=vagrant

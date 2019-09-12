@@ -1,0 +1,1 @@
+jenkinsuser ALL = (root) NOPASSWD: /etc/init.d/apache2 reload
